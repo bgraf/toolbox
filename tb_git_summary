@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+
+"""
+Summarise a git repository's state to STDOUT or a file.
+
+Usage:
+    tb_git_summary [-o <output file>] [<repo directory>]
+
+State includes:
+    - name of the directory
+    - current date time
+    - branch
+    - commit
+    - diff
+    - origin's URL
+
+Use case:
+    Sometimes we need to track the version of some software with a bit more detail than
+    just commits and branches. Maybe we're performing small experiments with local changes
+    that do not justify a full commit.
+
+Author:
+    2019, Benjamin Graf
+"""
+
+import argparse
+from pathlib import Path
+import subprocess as sp
+import datetime
+import sys
+
+
+def retrieve_git_info(path):
+    cwd = Path(path)
+
+    dt = datetime.datetime.now()
+
+    try:
+        commit = sp.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=cwd).decode('utf8').strip()
+
+        branch = sp.check_output(
+            ['git', 'rev-parse', '--symbolic-full-name', '--abbrev-ref', 'HEAD'], cwd=cwd).decode('utf8').strip()
+
+        remote = sp.check_output(
+            ['git', 'config', '--get', 'remote.origin.url'], cwd=cwd).decode('utf-8').strip()
+
+        info = {
+            'path': str(cwd.absolute()),
+            'commit': commit,
+            'branch': branch,
+            'remote': remote,
+            'queried': dt.isoformat(),
+
+        }
+
+        return info
+
+    except sp.CalledProcessError as e:
+        print('Error: "{}" is not a git repository'.format(path), file=sys.stderr)
+        exit(1)
+
+
+def pipe_git_diff(path, file):
+    cwd = Path(path)
+
+    with sp.Popen(['git', 'diff'], cwd=cwd, stdout=sp.PIPE) as p:
+        for line in p.stdout.readlines():
+            file.buffer.write(line)
+
+
+def write_info(repo_path, sink):
+    info = retrieve_git_info(repo_path)
+
+    for k, v in sorted(info.items()):
+        print('{:10}: {}'.format(k, v), file=sink)
+    print('----', file=sink)
+    sink.flush()
+
+    pipe_git_diff(repo_path, sink)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser('tb_git_summary')
+    parser.add_argument('-o', '--output', metavar='<path>', type=str, default=None,
+                        help='output file path (default: stdout)')
+    parser.add_argument('repo', metavar='<repo>', type=str, default='.', nargs='?',
+                        help='repository path')
+    args = parser.parse_args()
+
+    sink = sys.stdout if args.output is None else open(args.output, 'w')
+
+    write_info(args.repo, sink)
+
+    sink.close()
